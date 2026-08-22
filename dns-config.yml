@@ -1,0 +1,10 @@
+profile: LAB-DNS
+
+records:
+  - hostname: srv-ns-001
+    type: A
+    address: 10.100.100.99
+
+  - hostname: srv-ns-002
+    type: A
+    address: 10.100.100.100
