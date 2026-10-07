@@ -3,6 +3,7 @@
 *.csv*
 *.xls*
 *.xlsx*
+config.yml
 
 # My exceptions
 !ressources/*
