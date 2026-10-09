@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block content %}
+<header>
+  <h1>Local DNS <span class="muted">· profil {{ profile or "?" }}</span></h1>
+  <div class="actions">
+    <button class="btn" type="button" id="add-btn">+ Ajouter</button>
+    <button class="btn primary" type="button" id="push-btn">Pousser vers Meraki</button>
+  </div>
+</header>
+<table>
+  <thead><tr><th>Hostname</th><th>Type</th><th>Adresse</th></tr></thead>
+  <tbody>
+  {% for r in records %}
+    <tr class="row" data-hostname="{{ r.hostname }}" data-address="{{ r.address }}"
+        data-action="{{ url_for('edit_record', hostname=r.hostname) }}"
+        data-delete="{{ url_for('delete_record', hostname=r.hostname) }}">
+      <td>{{ r.hostname }}</td>
+      <td>{{ r.type }}</td>
+      <td><code>{{ r.address }}</code></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3" class="muted">Aucun enregistrement.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Les modifications sont enregistrées dans config.yml et n'atteignent Meraki qu'au moment de « Pousser ».</p>
+
+<dialog id="record-dialog">
+  <h2 id="record-title"></h2>
+  <form id="record-form">
+    <div id="record-error" class="flash error" hidden></div>
+    <label for="hostname">Hostname (FQDN)</label>
+    <input type="text" id="hostname" name="hostname" required>
+    <label for="address">Adresse IPv4 (type A)</label>
+    <input type="text" id="address" name="address" required>
+    <p class="actions">
+      <button class="btn primary" type="submit">Enregistrer</button>
+      <button class="btn" type="button" data-close>Annuler</button>
+      <button class="btn danger" type="button" id="delete-btn" hidden style="margin-left:auto">Supprimer</button>
+    </p>
+  </form>
+</dialog>
+
+<dialog id="delete-dialog">
+  <h2>Supprimer l'enregistrement</h2>
+  <p>Voulez-vous vraiment supprimer <b id="delete-name"></b> ? La suppression ne sera appliquée sur Meraki qu'au prochain push.</p>
+  <form id="delete-form" method="post" class="actions">
+    <button class="btn danger" type="submit">Supprimer</button>
+    <button class="btn" type="button" data-close>Annuler</button>
+  </form>
+</dialog>
+
+<dialog id="push-dialog">
+  <h2>Pousser vers Meraki</h2>
+  <div id="push-body"><p class="muted">Calcul du plan en cours…</p></div>
+</dialog>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const recordDialog = $("record-dialog"), deleteDialog = $("delete-dialog"), pushDialog = $("push-dialog");
+  let recordAction = "";
+
+  // Fermeture : tout élément [data-close] ferme sa modal ; clic sur le fond aussi
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("[data-close]")) e.target.closest("dialog").close();
+    else if (e.target instanceof HTMLDialogElement) e.target.close();
+  });
+
+  function openRecord({title, hostname = "", address = "", action, deleteUrl = null}) {
+    $("record-title").textContent = title;
+    $("hostname").value = hostname;
+    $("address").value = address;
+    $("record-error").hidden = true;
+    $("delete-btn").hidden = !deleteUrl;
+    $("delete-btn").dataset.url = deleteUrl || "";
+    $("delete-btn").dataset.name = hostname;
+    recordAction = action;
+    recordDialog.showModal();
+  }
+
+  $("add-btn").onclick = () => openRecord({title: "Nouvel enregistrement", action: "{{ url_for('create_record') }}"});
+
+  document.querySelectorAll("tr.row").forEach((tr) => {
+    tr.onclick = () => openRecord({
+      title: "Modifier " + tr.dataset.hostname, hostname: tr.dataset.hostname, address: tr.dataset.address,
+      action: tr.dataset.action, deleteUrl: tr.dataset.delete,
+    });
+  });
+
+  $("record-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const resp = await fetch(recordAction, {method: "POST", body: new FormData(e.target)});
+    const data = await resp.json();
+    if (resp.ok) { location.reload(); return; }
+    $("record-error").textContent = data.error || "Erreur inconnue.";
+    $("record-error").hidden = false;
+  };
+
+  $("delete-btn").onclick = (e) => {
+    $("delete-name").textContent = e.target.dataset.name;
+    $("delete-form").action = e.target.dataset.url;
+    recordDialog.close();
+    deleteDialog.showModal();
+  };
+
+  $("push-btn").onclick = async () => {
+    $("push-body").innerHTML = '<p class="muted">Calcul du plan en cours…</p>';
+    pushDialog.showModal();
+    try {
+      $("push-body").innerHTML = await (await fetch("{{ url_for('push_preview') }}")).text();
+    } catch (err) {
+      $("push-body").innerHTML = '<div class="flash error">Erreur : ' + err + '</div><button class="btn" type="button" data-close>Fermer</button>';
+    }
+  };
+</script>
+{% endblock %}

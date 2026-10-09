@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 from pathlib import Path
+import ipaddress
 import os
 import meraki
 import yaml
@@ -17,49 +18,120 @@ dashboard = meraki.DashboardAPI(
 )
 
 
-# Liste les réseaux
-def list_networks():
-    networks = dashboard.organizations.getOrganizationNetworks(ORG_ID)
-    for network in networks:
-        print(network["id"], "|", network["name"], "|", network.get("productTypes"))
+def _items(resp):
+    """Normalise les réponses de liste (liste brute ou {'items': [...]})."""
+    if isinstance(resp, dict):
+        return resp.get("items", [])
+    return resp or []
 
 
-# Liste les profils
-def list_profiles():
-    profiles = dashboard.appliance.getOrganizationApplianceDnsLocalProfiles(ORG_ID)
-    for profile in profiles:
-        print(profile[0], "|", profile[1])
+# Récupère les profils (liste de dicts)
+def get_profiles():
+    return _items(dashboard.appliance.getOrganizationApplianceDnsLocalProfiles(ORG_ID))
 
 
-# Liste les enregistrements DNS
-def list_records():
-    records = dashboard.appliance.getOrganizationApplianceDnsLocalRecords(ORG_ID)
-    for record in records:
-        print(record[0], "|", record[1], "|", record[2], "|", record[3])
+# Récupère les enregistrements, filtrés par profil si profile_id est fourni
+def get_records(profile_id=None):
+    records = _items(dashboard.appliance.getOrganizationApplianceDnsLocalRecords(ORG_ID))
+    if profile_id:
+        records = [r for r in records if r.get("profile", {}).get("id") == profile_id]
+    return records
 
 
-# Lire et afficher config.yml
+# Créer un profil
+def create_profile(name):
+    return dashboard.appliance.createOrganizationApplianceDnsLocalProfile(ORG_ID, name)
+
+
+# Créer un enregistrement (type A uniquement, pas de CNAME via l'API)
+def create_record(profile_id, hostname, address):
+    ipaddress.IPv4Address(address)  # valide l'IP, lève ValueError sinon
+    return dashboard.appliance.createOrganizationApplianceDnsLocalRecord(
+        ORG_ID, hostname, address, {"id": profile_id}
+    )
+
+
+# Mettre à jour un enregistrement (hostname et/ou address)
+def update_record(record_id, hostname=None, address=None):
+    changes = {}
+    if hostname:
+        changes["hostname"] = hostname
+    if address:
+        ipaddress.IPv4Address(address)
+        changes["address"] = address
+    if not changes:
+        return None
+    return dashboard.appliance.updateOrganizationApplianceDnsLocalRecord(ORG_ID, record_id, **changes)
+
+
+# Supprimer un enregistrement
+def delete_record(record_id):
+    dashboard.appliance.deleteOrganizationApplianceDnsLocalRecord(ORG_ID, record_id)
+
+
+# Lire config.yml
 def read_config(configfile):
     with open(configfile, "r", encoding="utf8") as f:
-        filecontent = yaml.safe_load(f)
-    print(filecontent)
-    return filecontent
+        return yaml.safe_load(f)
 
 
-# Appliquer la config
-def apply_config(configfile):
-    read_config(configfile)
+# Valide config.yml et renvoie (nom du profil, {hostname_minuscule: (hostname, address)})
+def load_desired(configfile):
+    cfg = read_config(configfile) or {}
+    profile_name = cfg.get("profile")
+    if not profile_name:
+        raise ValueError("'profile' manquant dans le fichier de config")
+    desired = {}
+    for rec in cfg.get("records") or []:
+        hostname = str(rec.get("hostname") or "").strip()
+        address = str(rec.get("address") or "").strip()
+        if not hostname or not address:
+            raise ValueError(f"Enregistrement incomplet : {rec}")
+        if str(rec.get("type") or "A").upper() != "A":
+            raise ValueError(f"{hostname} : seul le type A est supporté par l'API")
+        ipaddress.IPv4Address(address)
+        if hostname.lower() in desired:
+            raise ValueError(f"{hostname} : doublon dans le fichier de config")
+        desired[hostname.lower()] = (hostname, address)
+    return profile_name, desired
 
 
-# Ajouter enregistrement
-def add_record(configfile, new_data):
-    with open(configfile, "+a", encoding="uft8") as f:
-        f.seek(0)
-        existing_data = yaml.safe_load(f) or []
-        existing_data.append(new_data)
-        f.seek(0)
-        yaml.dump(existing_data, f, default_flow_style=False)
+# Compare le fichier (desired) à Meraki (existing, liste de dicts) -> (create, update, delete)
+def diff_records(desired, existing):
+    current = {r["hostname"].lower(): r for r in existing}
+    create = [v for k, v in desired.items() if k not in current]
+    update = [(current[k], v[1]) for k, v in desired.items()
+              if k in current and current[k]["address"] != v[1]]
+    delete = [r for k, r in current.items() if k not in desired]
+    return create, update, delete
 
 
-if __name__ == '__main__':
-    list_profiles()
+# Calcule le plan de synchro entre config.yml et Meraki (lecture seule côté Meraki)
+def plan_config(configfile):
+    profile_name, desired = load_desired(configfile)
+    profile = next((p for p in get_profiles() if p["name"] == profile_name), None)
+    existing = get_records(profile["profileId"]) if profile else []
+    create, update, delete = diff_records(desired, existing)
+    return {
+        "profile_name": profile_name,
+        "profile_id": profile["profileId"] if profile else None,
+        "create": create,
+        "update": update,
+        "delete": delete,
+        "empty_config": not desired,
+    }
+
+
+def plan_is_empty(plan):
+    return bool(plan["profile_id"]) and not (plan["create"] or plan["update"] or plan["delete"])
+
+
+# Exécute un plan : crée le profil si besoin, puis créations, mises à jour, suppressions
+def execute_plan(plan):
+    profile_id = plan["profile_id"] or create_profile(plan["profile_name"])["profileId"]
+    for hostname, address in plan["create"]:
+        create_record(profile_id, hostname, address)
+    for rec, address in plan["update"]:
+        update_record(rec["recordId"], address=address)
+    for rec in plan["delete"]:
+        delete_record(rec["recordId"])

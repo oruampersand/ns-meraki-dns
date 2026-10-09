@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meraki Local DNS</title>
+<style>
+  :root { color-scheme: light dark; --line: #8884; --accent: #1a73e8; --danger: #d93025; --ok: #188038; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-size: 1.4rem; margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--line); }
+  tbody tr:hover { background: #8881; }
+  td a { color: inherit; text-decoration: none; display: block; }
+  .btn { font: inherit; padding: .4rem .9rem; border: 1px solid var(--line); border-radius: 6px;
+         background: transparent; color: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { color: var(--danger); border-color: var(--danger); }
+  .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .flash { padding: .6rem .9rem; border-radius: 6px; margin: 1rem 0; border: 1px solid; }
+  .flash.ok { color: var(--ok); } .flash.error { color: var(--danger); }
+  label { display: block; margin: .8rem 0 .2rem; }
+  input[type=text] { font: inherit; width: 100%; padding: .4rem .6rem; box-sizing: border-box;
+                     border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
+  .muted { opacity: .7; }
+  .add { color: var(--ok); } .mod { color: var(--accent); } .del { color: var(--danger); }
+  dialog { border: 1px solid var(--line); border-radius: 10px; padding: 1.2rem 1.4rem; width: min(520px, 92vw);
+           background: Canvas; color: CanvasText; }
+  dialog::backdrop { background: #0006; }
+  dialog h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
+  tr.row { cursor: pointer; }
+  [hidden] { display: none !important; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
+{% endwith %}
+{% block content %}{% endblock %}
+</body>
+</html>
