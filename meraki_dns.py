@@ -3,7 +3,6 @@ from pathlib import Path
 import ipaddress
 import os
 import meraki
-import yaml
 
 BASE_DIR = Path(__file__).resolve().parent
 env_path = BASE_DIR / ".env"
@@ -25,10 +24,59 @@ def _items(resp):
     return resp or []
 
 
+# --- Profils ---
+
 # Récupère les profils (liste de dicts)
 def get_profiles():
     return _items(dashboard.appliance.getOrganizationApplianceDnsLocalProfiles(ORG_ID))
 
+
+def _check_profile_name(name, profiles, current_id=None):
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Le nom du profil est obligatoire.")
+    if any(p["name"].lower() == name.lower() and p["profileId"] != current_id for p in profiles):
+        raise ValueError(f"Un profil nommé « {name} » existe déjà.")
+    return name
+
+
+# Créer un profil
+def create_profile(name):
+    name = _check_profile_name(name, get_profiles())
+    return dashboard.appliance.createOrganizationApplianceDnsLocalProfile(ORG_ID, name)
+
+
+# Renommer un profil
+def update_profile(profile_id, name):
+    name = _check_profile_name(name, get_profiles(), current_id=profile_id)
+    return dashboard.appliance.updateOrganizationApplianceDnsLocalProfile(ORG_ID, profile_id, name)
+
+
+# Supprimer un profil (refusé tant qu'il a des enregistrements ou des réseaux associés)
+def delete_profile(profile_id):
+    if get_records(profile_id):
+        raise ValueError("Ce profil contient encore des enregistrements : supprimez-les d'abord.")
+    if any(a.get("profile", {}).get("id") == profile_id for a in get_assignments()):
+        raise ValueError("Ce profil est associé à un ou plusieurs réseaux : dissociez-le d'abord.")
+    dashboard.appliance.deleteOrganizationApplianceDnsLocalProfile(ORG_ID, profile_id)
+
+
+# Profils avec le nombre d'enregistrements et de réseaux associés
+def list_profile_summaries():
+    records = get_records()
+    assignments = get_assignments()
+    rows = []
+    for p in get_profiles():
+        rows.append({
+            "id": p["profileId"],
+            "name": p["name"],
+            "records": sum(1 for r in records if r.get("profile", {}).get("id") == p["profileId"]),
+            "networks": sum(1 for a in assignments if a.get("profile", {}).get("id") == p["profileId"]),
+        })
+    return sorted(rows, key=lambda r: r["name"].lower())
+
+
+# --- Enregistrements ---
 
 # Récupère les enregistrements, filtrés par profil si profile_id est fourni
 def get_records(profile_id=None):
@@ -38,36 +86,48 @@ def get_records(profile_id=None):
     return records
 
 
-# Créer un profil
-def create_profile(name):
-    return dashboard.appliance.createOrganizationApplianceDnsLocalProfile(ORG_ID, name)
+def _check_record(hostname, address, siblings, current_id=None):
+    hostname = (hostname or "").strip()
+    address = (address or "").strip()
+    if not hostname or not address:
+        raise ValueError("Hostname et adresse sont obligatoires.")
+    try:
+        ipaddress.IPv4Address(address)
+    except ValueError:
+        raise ValueError(f"Adresse IPv4 invalide : {address}") from None
+    if any(r["hostname"].lower() == hostname.lower() and r["recordId"] != current_id for r in siblings):
+        raise ValueError(f"{hostname} existe déjà dans ce profil.")
+    return hostname, address
 
 
 # Créer un enregistrement (type A uniquement, pas de CNAME via l'API)
 def create_record(profile_id, hostname, address):
-    ipaddress.IPv4Address(address)  # valide l'IP, lève ValueError sinon
+    if not any(p["profileId"] == profile_id for p in get_profiles()):
+        raise ValueError("Profil introuvable.")
+    hostname, address = _check_record(hostname, address, get_records(profile_id))
     return dashboard.appliance.createOrganizationApplianceDnsLocalRecord(
         ORG_ID, hostname, address, {"id": profile_id}
     )
 
 
-# Mettre à jour un enregistrement (hostname et/ou address)
-def update_record(record_id, hostname=None, address=None):
-    changes = {}
-    if hostname:
-        changes["hostname"] = hostname
-    if address:
-        ipaddress.IPv4Address(address)
-        changes["address"] = address
-    if not changes:
-        return None
-    return dashboard.appliance.updateOrganizationApplianceDnsLocalRecord(ORG_ID, record_id, **changes)
+# Mettre à jour un enregistrement (hostname et adresse)
+def update_record(record_id, hostname, address):
+    record = next((r for r in get_records() if r["recordId"] == record_id), None)
+    if not record:
+        raise ValueError("Enregistrement introuvable.")
+    siblings = get_records(record["profile"]["id"])
+    hostname, address = _check_record(hostname, address, siblings, current_id=record_id)
+    return dashboard.appliance.updateOrganizationApplianceDnsLocalRecord(
+        ORG_ID, record_id, hostname=hostname, address=address
+    )
 
 
 # Supprimer un enregistrement
 def delete_record(record_id):
     dashboard.appliance.deleteOrganizationApplianceDnsLocalRecord(ORG_ID, record_id)
 
+
+# --- Réseaux ---
 
 # Réseaux de l'org ayant un MX (seuls ceux-ci supportent le Local DNS)
 def get_networks():
@@ -102,7 +162,7 @@ def assign_profile(network_id, profile_id):
     if not any(n["id"] == network_id for n in get_networks()):
         raise ValueError("Réseau introuvable (ou sans appliance MX).")
     if not any(p["profileId"] == profile_id for p in get_profiles()):
-        raise ValueError("Profil introuvable sur Meraki (poussez d'abord les enregistrements pour le créer).")
+        raise ValueError("Profil introuvable sur Meraki.")
     if any(a.get("network", {}).get("id") == network_id for a in get_assignments()):
         raise ValueError("Ce réseau a déjà un profil : dissociez-le d'abord.")
     dashboard.appliance.bulkOrganizationApplianceDnsLocalProfilesAssignmentsCreate(
@@ -118,71 +178,3 @@ def unassign_profile(network_id):
     dashboard.appliance.createOrganizationApplianceDnsLocalProfilesAssignmentsBulkDelete(
         ORG_ID, [{"assignmentId": current["assignmentId"]}]
     )
-
-
-# Lire config.yml
-def read_config(configfile):
-    with open(configfile, "r", encoding="utf8") as f:
-        return yaml.safe_load(f)
-
-
-# Valide config.yml et renvoie (nom du profil, {hostname_minuscule: (hostname, address)})
-def load_desired(configfile):
-    cfg = read_config(configfile) or {}
-    profile_name = cfg.get("profile")
-    if not profile_name:
-        raise ValueError("'profile' manquant dans le fichier de config")
-    desired = {}
-    for rec in cfg.get("records") or []:
-        hostname = str(rec.get("hostname") or "").strip()
-        address = str(rec.get("address") or "").strip()
-        if not hostname or not address:
-            raise ValueError(f"Enregistrement incomplet : {rec}")
-        if str(rec.get("type") or "A").upper() != "A":
-            raise ValueError(f"{hostname} : seul le type A est supporté par l'API")
-        ipaddress.IPv4Address(address)
-        if hostname.lower() in desired:
-            raise ValueError(f"{hostname} : doublon dans le fichier de config")
-        desired[hostname.lower()] = (hostname, address)
-    return profile_name, desired
-
-
-# Compare le fichier (desired) à Meraki (existing, liste de dicts) -> (create, update, delete)
-def diff_records(desired, existing):
-    current = {r["hostname"].lower(): r for r in existing}
-    create = [v for k, v in desired.items() if k not in current]
-    update = [(current[k], v[1]) for k, v in desired.items()
-              if k in current and current[k]["address"] != v[1]]
-    delete = [r for k, r in current.items() if k not in desired]
-    return create, update, delete
-
-
-# Calcule le plan de synchro entre config.yml et Meraki (lecture seule côté Meraki)
-def plan_config(configfile):
-    profile_name, desired = load_desired(configfile)
-    profile = next((p for p in get_profiles() if p["name"] == profile_name), None)
-    existing = get_records(profile["profileId"]) if profile else []
-    create, update, delete = diff_records(desired, existing)
-    return {
-        "profile_name": profile_name,
-        "profile_id": profile["profileId"] if profile else None,
-        "create": create,
-        "update": update,
-        "delete": delete,
-        "empty_config": not desired,
-    }
-
-
-def plan_is_empty(plan):
-    return bool(plan["profile_id"]) and not (plan["create"] or plan["update"] or plan["delete"])
-
-
-# Exécute un plan : crée le profil si besoin, puis créations, mises à jour, suppressions
-def execute_plan(plan):
-    profile_id = plan["profile_id"] or create_profile(plan["profile_name"])["profileId"]
-    for hostname, address in plan["create"]:
-        create_record(profile_id, hostname, address)
-    for rec, address in plan["update"]:
-        update_record(rec["recordId"], address=address)
-    for rec in plan["delete"]:
-        delete_record(rec["recordId"])

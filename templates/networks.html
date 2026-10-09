@@ -2,7 +2,6 @@
 {% block content %}
 <header>
   <h1>Réseaux <span class="muted">· lus sur Meraki</span></h1>
-  <div class="actions"><a class="btn" href="{{ url_for('index') }}">← Enregistrements</a></div>
 </header>
 <table>
   <thead><tr><th>Réseau</th><th>Profil Local DNS</th><th></th></tr></thead>
@@ -53,12 +52,10 @@
   </form>
 </dialog>
 
+
+{% endblock %}
+{% block script %}
 <script>
-  const $ = (id) => document.getElementById(id);
-  document.addEventListener("click", (e) => {
-    if (e.target.closest("[data-close]")) e.target.closest("dialog").close();
-    else if (e.target instanceof HTMLDialogElement) e.target.close();
-  });
   document.querySelectorAll("[data-assign]").forEach((b) => b.onclick = () => {
     $("assign-network").textContent = b.dataset.network;
     $("assign-form").action = b.dataset.assign;

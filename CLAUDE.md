@@ -1,12 +1,12 @@
 # ns-meraki-dns
 
-Web app Flask pour gérer le Local DNS des MX Meraki (enregistrements de type A uniquement : l'API Meraki ne gère pas les CNAME).
+Web app Flask pour gérer le Local DNS des MX Meraki : enregistrements, profils, association profil <-> réseau. Enregistrements de type A uniquement (l'API Meraki ne gère pas les CNAME).
 
 ## Lancer
 
 ```
 .venv/bin/pip install -r requirements.txt
-cp .env.example .env && cp config.yml.example config.yml   # puis renseigner API_KEY, ORG_ID, profile
+cp .env.example .env                                       # puis renseigner API_KEY et ORG_ID
 .venv/bin/python app.py                                    # http://127.0.0.1:5050
 ```
 
@@ -14,19 +14,17 @@ Le port 5050 est volontaire : 5000 est pris par AirPlay sur macOS (réponse 403 
 
 ## Architecture
 
-- `config.yml` (**ignoré par git**, modèle : `config.yml.example`) est la source de vérité : `profile` + liste `records` (`hostname`, `type`, `address`).
-- `app.py` : routes Flask. Ajout/modification/suppression ne modifient que `config.yml`. `/push` (GET) renvoie le fragment HTML du plan, `/push` (POST) l'applique. `/networks` liste les réseaux MX et leur profil (lecture directe sur Meraki, pas via le YAML) ; `/networks/<id>/assign|unassign` associent ou dissocient un profil, après confirmation en modal.
-- `meraki_dns.py` : accès à l'API Meraki (SDK `meraki`) et logique de synchro : `load_desired` -> `diff_records` -> `plan_config` -> `execute_plan`, et association réseau/profil (`list_network_profiles`, `assign_profile`, `unassign_profile`). Lit `API_KEY` et `ORG_ID` dans `.env` à l'import.
-- `templates/` : `index.html` (liste + modals `<dialog>` création/modification/suppression/push, JS inline), `push_plan.html` (fragment du plan), `base.html`.
+- **Meraki est la source de vérité** : plus de fichier YAML. Chaque page lit en direct sur Meraki et chaque action écrit immédiatement, après confirmation en modal.
+- `app.py` : routes Flask. Pages : `/` (enregistrements, filtre par profil), `/profiles` (créer, renommer, supprimer), `/networks` (associer/dissocier). Les modals de création/modification passent par `fetch` (JSON, `run_json`), les suppressions et associations par un POST classique (`run_redirect`).
+- `meraki_dns.py` : accès à l'API Meraki (SDK `meraki`) et validations (`ValueError` = erreur affichable à l'utilisateur). Lit `API_KEY` et `ORG_ID` dans `.env` à l'import.
+- `templates/` : `base.html` (nav, styles), `index.html`, `profiles.html`, `networks.html` ; `static/app.js` : fermeture des modals et `submitJson`.
 
 ## Règles importantes
 
-- La synchro est **destructive** : un enregistrement présent sur Meraki dans le profil du YAML mais absent du YAML est supprimé. Les autres profils ne sont jamais touchés.
-- Toute écriture vers Meraki passe par le plan + une modal de confirmation. Ne jamais appliquer sans confirmation (idem pour l'association/dissociation d'un profil).
-- `assign_profile` refuse d'écraser un profil déjà associé : il faut dissocier d'abord.
-- `meraki_dns` est importé tardivement (`_meraki()` dans `app.py`) pour que la liste fonctionne sans clé API.
-- Ne pas se connecter à l'org Meraki réelle pour tester, même en lecture. Tester avec un faux module `meraki_dns` et une copie de `config.yml` (client de test Flask).
-- Les hostnames sont comparés sans tenir compte de la casse.
-- Dans les templates Jinja, utiliser `plan["update"]` et non `plan.update` (collision avec `dict.update`).
+- Toute écriture vers Meraki passe par une modal de confirmation. Ne jamais écrire sans confirmation.
+- `delete_profile` refuse un profil qui a encore des enregistrements ou des réseaux associés ; `assign_profile` refuse d'écraser un profil déjà associé (dissocier d'abord). Ces garde-fous sont volontaires (comportement de l'API non vérifié).
+- Hostnames et noms de profil sont comparés sans tenir compte de la casse.
+- `meraki_dns` est importé tardivement (`_meraki()` dans `app.py`) : une clé API absente ou invalide s'affiche dans la page au lieu de planter le démarrage.
+- Ne pas se connecter à l'org Meraki réelle pour tester, même en lecture. Tester avec un faux `meraki_dns.dashboard` (objet avec les mêmes méthodes, clé API factice) et le client de test Flask.
 - L'app n'a ni authentification ni CSRF : elle écoute sur 127.0.0.1 uniquement, ne pas l'exposer.
-- Ne jamais committer `.env` ni `config.yml`.
+- Ne jamais committer `.env`.

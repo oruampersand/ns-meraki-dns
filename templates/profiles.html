@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<header>
+  <h1>Profils <span class="muted">· lus sur Meraki</span></h1>
+  <div class="actions"><button class="btn primary" type="button" id="add-btn">+ Nouveau profil</button></div>
+</header>
+<table>
+  <thead><tr><th>Nom</th><th>Enregistrements</th><th>Réseaux</th></tr></thead>
+  <tbody>
+  {% for p in profiles %}
+    <tr class="row" data-name="{{ p.name }}" data-records="{{ p.records }}" data-networks="{{ p.networks }}"
+        data-action="{{ url_for('profile_update', profile_id=p.id) }}"
+        data-delete="{{ url_for('profile_delete', profile_id=p.id) }}">
+      <td>{{ p.name }}<br><span class="muted"><code>{{ p.id }}</code></span></td>
+      <td>{{ p.records }}</td>
+      <td>{{ p.networks }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3" class="muted">Aucun profil.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<dialog id="profile-dialog">
+  <h2 id="profile-title"></h2>
+  <form id="profile-form">
+    <div id="profile-error" class="flash error" hidden></div>
+    <label for="name">Nom du profil</label>
+    <input type="text" id="name" name="name" required>
+    <p id="delete-hint" class="muted" hidden></p>
+    <p class="actions">
+      <button class="btn primary" type="submit">Enregistrer</button>
+      <button class="btn" type="button" data-close>Annuler</button>
+      <button class="btn danger" type="button" id="delete-btn" hidden style="margin-left:auto">Supprimer</button>
+    </p>
+  </form>
+</dialog>
+
+<dialog id="delete-dialog">
+  <h2>Supprimer le profil</h2>
+  <p>Voulez-vous vraiment supprimer le profil <b id="delete-name"></b> ? La suppression est immédiate sur Meraki.</p>
+  <form id="delete-form" method="post" class="actions">
+    <button class="btn danger" type="submit">Supprimer</button>
+    <button class="btn" type="button" data-close>Annuler</button>
+  </form>
+</dialog>
+{% endblock %}
+{% block script %}
+<script>
+  let profileAction = "";
+
+  function openProfile({title, name = "", action, row = null}) {
+    $("profile-title").textContent = title;
+    $("name").value = name;
+    $("profile-error").hidden = true;
+    profileAction = action;
+    const editing = row !== null;
+    const blocked = editing && (+row.dataset.records > 0 || +row.dataset.networks > 0);
+    $("delete-btn").hidden = !editing || blocked;
+    $("delete-hint").hidden = !blocked;
+    if (blocked) {
+      $("delete-hint").textContent = "Suppression impossible : " + row.dataset.records + " enregistrement(s) et "
+        + row.dataset.networks + " réseau(x) associé(s). Videz et dissociez le profil d'abord.";
+    }
+    if (editing) {
+      $("delete-btn").dataset.url = row.dataset.delete;
+      $("delete-btn").dataset.name = name;
+    }
+    $("profile-dialog").showModal();
+  }
+
+  $("add-btn").onclick = () => openProfile({title: "Nouveau profil", action: "{{ url_for('profile_create') }}"});
+
+  document.querySelectorAll("tr.row").forEach((tr) => tr.onclick = () => openProfile({
+    title: "Modifier " + tr.dataset.name, name: tr.dataset.name, action: tr.dataset.action, row: tr,
+  }));
+
+  $("profile-form").onsubmit = (e) => { e.preventDefault(); submitJson(e.target, profileAction, $("profile-error")); };
+
+  $("delete-btn").onclick = (e) => {
+    $("delete-name").textContent = e.target.dataset.name;
+    $("delete-form").action = e.target.dataset.url;
+    $("profile-dialog").close();
+    $("delete-dialog").showModal();
+  };
+</script>
+{% endblock %}
