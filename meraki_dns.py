@@ -69,6 +69,57 @@ def delete_record(record_id):
     dashboard.appliance.deleteOrganizationApplianceDnsLocalRecord(ORG_ID, record_id)
 
 
+# Réseaux de l'org ayant un MX (seuls ceux-ci supportent le Local DNS)
+def get_networks():
+    networks = dashboard.organizations.getOrganizationNetworks(ORG_ID, total_pages="all")
+    return [n for n in _items(networks) if "appliance" in n.get("productTypes", [])]
+
+
+# Associations réseau <-> profil existantes
+def get_assignments():
+    return _items(dashboard.appliance.getOrganizationApplianceDnsLocalProfilesAssignments(ORG_ID))
+
+
+# Réseaux avec leur profil associé (ou None) : liste de dicts pour l'affichage
+def list_network_profiles():
+    names = {p["profileId"]: p["name"] for p in get_profiles()}
+    by_network = {a.get("network", {}).get("id"): a for a in get_assignments()}
+    rows = []
+    for n in get_networks():
+        a = by_network.get(n["id"])
+        profile_id = a.get("profile", {}).get("id") if a else None
+        rows.append({
+            "id": n["id"],
+            "name": n["name"],
+            "profile_id": profile_id,
+            "profile_name": names.get(profile_id, profile_id),
+        })
+    return sorted(rows, key=lambda r: r["name"].lower())
+
+
+# Associe un profil à un réseau (refuse d'écraser une association existante)
+def assign_profile(network_id, profile_id):
+    if not any(n["id"] == network_id for n in get_networks()):
+        raise ValueError("Réseau introuvable (ou sans appliance MX).")
+    if not any(p["profileId"] == profile_id for p in get_profiles()):
+        raise ValueError("Profil introuvable sur Meraki (poussez d'abord les enregistrements pour le créer).")
+    if any(a.get("network", {}).get("id") == network_id for a in get_assignments()):
+        raise ValueError("Ce réseau a déjà un profil : dissociez-le d'abord.")
+    dashboard.appliance.bulkOrganizationApplianceDnsLocalProfilesAssignmentsCreate(
+        ORG_ID, [{"network": {"id": network_id}, "profile": {"id": profile_id}}]
+    )
+
+
+# Dissocie le profil d'un réseau
+def unassign_profile(network_id):
+    current = next((a for a in get_assignments() if a.get("network", {}).get("id") == network_id), None)
+    if not current:
+        raise ValueError("Ce réseau n'a pas de profil associé.")
+    dashboard.appliance.createOrganizationApplianceDnsLocalProfilesAssignmentsBulkDelete(
+        ORG_ID, [{"assignmentId": current["assignmentId"]}]
+    )
+
+
 # Lire config.yml
 def read_config(configfile):
     with open(configfile, "r", encoding="utf8") as f:

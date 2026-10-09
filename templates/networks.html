@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+<header>
+  <h1>Réseaux <span class="muted">· lus sur Meraki</span></h1>
+  <div class="actions"><a class="btn" href="{{ url_for('index') }}">← Enregistrements</a></div>
+</header>
+<table>
+  <thead><tr><th>Réseau</th><th>Profil Local DNS</th><th></th></tr></thead>
+  <tbody>
+  {% for n in networks %}
+    <tr>
+      <td>{{ n.name }}<br><span class="muted"><code>{{ n.id }}</code></span></td>
+      <td>{{ n.profile_name or "—" }}</td>
+      <td style="text-align:right">
+        {% if n.profile_id %}
+          <button class="btn danger" type="button" data-unassign="{{ url_for('network_unassign', network_id=n.id) }}"
+                  data-network="{{ n.name }}" data-profile="{{ n.profile_name }}">Dissocier</button>
+        {% else %}
+          <button class="btn" type="button" data-assign="{{ url_for('network_assign', network_id=n.id) }}"
+                  data-network="{{ n.name }}" {{ "disabled" if not profiles }}>Associer</button>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3" class="muted">Aucun réseau avec appliance MX.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if not profiles %}<p class="muted">Aucun profil sur Meraki : poussez d'abord les enregistrements pour créer le profil.</p>{% endif %}
+
+<dialog id="assign-dialog">
+  <h2>Associer un profil</h2>
+  <p>Réseau : <b id="assign-network"></b></p>
+  <form id="assign-form" method="post">
+    <label for="profile_id">Profil</label>
+    <select id="profile_id" name="profile_id" required>
+      {% for p in profiles %}<option value="{{ p.profileId }}">{{ p.name }}</option>{% endfor %}
+    </select>
+    <p class="muted">Voulez-vous vraiment associer ce profil à ce réseau ? Ses enregistrements seront servis par le MX.</p>
+    <p class="actions">
+      <button class="btn primary" type="submit">Confirmer l'association</button>
+      <button class="btn" type="button" data-close>Annuler</button>
+    </p>
+  </form>
+</dialog>
+
+<dialog id="unassign-dialog">
+  <h2>Dissocier le profil</h2>
+  <p>Voulez-vous vraiment dissocier <b id="unassign-profile"></b> du réseau <b id="unassign-network"></b> ? Ses enregistrements ne seront plus servis par ce réseau.</p>
+  <form id="unassign-form" method="post" class="actions">
+    <button class="btn danger" type="submit">Confirmer la dissociation</button>
+    <button class="btn" type="button" data-close>Annuler</button>
+  </form>
+</dialog>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("[data-close]")) e.target.closest("dialog").close();
+    else if (e.target instanceof HTMLDialogElement) e.target.close();
+  });
+  document.querySelectorAll("[data-assign]").forEach((b) => b.onclick = () => {
+    $("assign-network").textContent = b.dataset.network;
+    $("assign-form").action = b.dataset.assign;
+    $("assign-dialog").showModal();
+  });
+  document.querySelectorAll("[data-unassign]").forEach((b) => b.onclick = () => {
+    $("unassign-network").textContent = b.dataset.network;
+    $("unassign-profile").textContent = b.dataset.profile;
+    $("unassign-form").action = b.dataset.unassign;
+    $("unassign-dialog").showModal();
+  });
+</script>
+{% endblock %}

@@ -129,5 +129,39 @@ def push_apply():
     return redirect(url_for("index"))
 
 
+@app.get("/networks")
+def networks():
+    """Réseaux et profils associés, lus en direct sur Meraki."""
+    try:
+        m = _meraki()
+        rows, profiles = m.list_network_profiles(), m.get_profiles()
+    except Exception as e:
+        flash(f"Impossible de lire les réseaux : {e}", "error")
+        return redirect(url_for("index"))
+    return render_template("networks.html", networks=rows, profiles=profiles)
+
+
+@app.post("/networks/<network_id>/assign")
+def network_assign(network_id):
+    try:
+        _meraki().assign_profile(network_id, request.form.get("profile_id", ""))
+    except Exception as e:
+        flash(f"Échec de l'association : {e}", "error")
+    else:
+        flash("Profil associé au réseau.", "ok")
+    return redirect(url_for("networks"))
+
+
+@app.post("/networks/<network_id>/unassign")
+def network_unassign(network_id):
+    try:
+        _meraki().unassign_profile(network_id)
+    except Exception as e:
+        flash(f"Échec de la dissociation : {e}", "error")
+    else:
+        flash("Profil dissocié du réseau.", "ok")
+    return redirect(url_for("networks"))
+
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5050, debug=False)

@@ -3,6 +3,7 @@
 <header>
   <h1>Local DNS <span class="muted">· profil {{ profile or "?" }}</span></h1>
   <div class="actions">
+    <a class="btn" href="{{ url_for('networks') }}">Réseaux</a>
     <button class="btn" type="button" id="add-btn">+ Ajouter</button>
     <button class="btn primary" type="button" id="push-btn">Pousser vers Meraki</button>
   </div>
